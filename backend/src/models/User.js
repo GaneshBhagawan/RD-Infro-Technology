@@ -39,12 +39,15 @@ const userSchema = new mongoose.Schema(
 )
 
 /* ── Hash password before saving ───────────────────────── */
-userSchema.pre('save', async function (next) {
-  // only hash if password was actually changed
-  if (!this.isModified('password')) return next()
-  this.password = await bcrypt.hash(this.password, 12)
-  next()
-})
+userSchema.pre('save', async function () {
+  // Only hash if password was actually changed or is new
+  if (!this.isModified('password')) {
+    return;
+  }
+  
+  // Hash the password cleanly using bcryptjs
+  this.password = await bcrypt.hash(this.password, 12);
+});
 
 /* ── Instance method: compare password ─────────────────── */
 userSchema.methods.comparePassword = async function (candidatePassword) {
