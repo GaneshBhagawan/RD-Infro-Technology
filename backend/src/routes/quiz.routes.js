@@ -8,29 +8,31 @@ import {
   togglePublish,
   deleteQuiz,
   getQuizAnalytics,
+  generateAIQuiz,
 }                          from '../controllers/quiz.controller.js'
 import verifyToken         from '../middleware/auth.middleware.js'
 import requireRole         from '../middleware/role.middleware.js'
 
 const router = Router()
 
+/* ══════════════════════════════════════════════════════════════════
+   ROUTE ORDER MATTERS IN EXPRESS.
+   More specific paths must come BEFORE wildcard paths like /:id.
+═══════════════════════════════════════════════════════════════════ */
+
 /* ── Public routes ──────────────────────────────────────────────── */
 
 // Browse all published quizzes — no login needed
 router.get('/', getPublishedQuizzes)
 
-// Get single quiz — optional auth (creator sees answers, taker doesn't)
-// We pass verifyToken but make it optional via a wrapper
-router.get('/:id', optionalAuth, getQuizById)
+/* ── Creator-only: specific string paths (BEFORE /:id) ─────────── */
 
-/* ── Creator-only routes ────────────────────────────────────────── */
-
-// Create a new quiz
+// AI quiz generation — must be before /:id
 router.post(
-  '/',
+  '/generate-ai',
   verifyToken,
   requireRole('creator'),
-  createQuiz
+  generateAIQuiz
 )
 
 // Get all of the logged-in creator's quizzes (dashboard)
@@ -40,6 +42,19 @@ router.get(
   requireRole('creator'),
   getMyQuizzes
 )
+
+// Create a new quiz manually
+router.post(
+  '/',
+  verifyToken,
+  requireRole('creator'),
+  createQuiz
+)
+
+/* ── Routes with /:id wildcard (AFTER all specific paths) ───────── */
+
+// Get single quiz — optional auth (creator sees answers, taker does not)
+router.get('/:id', optionalAuth, getQuizById)
 
 // Update quiz content
 router.put(
@@ -73,25 +88,24 @@ router.get(
   getQuizAnalytics
 )
 
-/* ── optionalAuth helper ────────────────────────────────────────────
-   Used on GET /:id so creators can see correct answers when editing
-   their own quiz, while unauthenticated takers see it without answers.
-   Unlike verifyToken, this never returns a 401 — it just skips.   ── */
-function optionalAuth (req, res, next) {
+/* ── Clean optionalAuth helper ──────────────────────────────────────
+   Uses the already imported verifyToken middleware safely.
+   If no token is sent, it smoothly passes the user forward as a guest.
+─────────────────────────────────────────────────────────────────── */
+function optionalAuth(req, res, next) {
   const authHeader = req.headers['authorization']
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return next()   // no token — continue without req.user
+    return next() // Clear to proceed as anonymous public taker
   }
-
-  // Reuse verifyToken logic but swallow errors
-  import('../middleware/auth.middleware.js')
-    .then(({ default: verifyToken }) => {
-      verifyToken(req, res, (err) => {
-        if (err) return next()   // invalid token — just continue without user
-        next()
-      })
-    })
-    .catch(() => next())
+  
+  // Safely execute your existing verification token middleware
+  verifyToken(req, res, (err) => {
+    // If token is expired or invalid, clear any corrupted user data and move on
+    if (err) {
+      req.user = null 
+    }
+    next()
+  })
 }
 
 export default router

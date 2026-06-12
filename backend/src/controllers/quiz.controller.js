@@ -1,4 +1,5 @@
 import Quiz from '../models/Quiz.js'
+import groq from '../utils/groqClient.js'
 
 /* ── Helper: strip correct answers for takers ───────────────────────
    Never send correctAnswer to the client during an active quiz.
@@ -315,5 +316,246 @@ export const getQuizAnalytics = async (req, res) => {
   } catch (error) {
     console.error('getQuizAnalytics error:', error)
     res.status(500).json({ message: 'Server error fetching analytics' })
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   9. AI-POWERED QUIZ GENERATION
+   POST /api/quizzes/generate-ai
+   Creator only.
+
+   Body: {
+     prompt:      "10 chemistry questions for graduation level",
+     timeLimit:   600,     (optional, default 600)
+     difficulty:  "medium" (optional: easy | medium | hard)
+   }
+
+   Flow:
+   1. Build a strict system prompt that forces JSON output
+   2. Send user prompt + system prompt to Groq (LLaMA 3.3-70B)
+   3. Parse and validate the JSON response
+   4. Save as a new draft quiz in MongoDB
+   5. Return the saved quiz to the frontend
+═══════════════════════════════════════════════════════════════════ */
+export const generateAIQuiz = async (req, res) => {
+  try {
+    const {
+      prompt,
+      timeLimit  = 600,
+      difficulty = 'medium',
+    } = req.body
+
+    /* ── Input validation ─────────────────────────────────────── */
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 10) {
+      return res.status(400).json({
+        message: 'Prompt must be at least 10 characters long',
+      })
+    }
+
+    if (prompt.trim().length > 500) {
+      return res.status(400).json({
+        message: 'Prompt must be under 500 characters',
+      })
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       SYSTEM PROMPT
+       This is the most important part of AI generation.
+       It forces the LLM to return ONLY valid JSON —
+       no preamble, no markdown, no extra text.
+       Any deviation breaks JSON.parse() and we catch it.
+    ══════════════════════════════════════════════════════════ */
+    const systemPrompt = `
+You are a professional quiz generation engine. Your ONLY job is to output
+a single valid JSON object — nothing else. No markdown, no code fences,
+no explanations, no preamble, no trailing text. Just raw JSON.
+
+The JSON object you output must match this exact schema:
+
+{
+  "title": "string — a clear descriptive quiz title (5–80 chars)",
+  "description": "string — one sentence describing the quiz (10–150 chars)",
+  "questions": [
+    {
+      "text": "string — the full question text (10–300 chars)",
+      "options": [
+        { "label": "A", "text": "string — option text (1–100 chars)" },
+        { "label": "B", "text": "string — option text (1–100 chars)" },
+        { "label": "C", "text": "string — option text (1–100 chars)" },
+        { "label": "D", "text": "string — option text (1–100 chars)" }
+      ],
+      "correctAnswer": "A" | "B" | "C" | "D",
+      "explanation": "string — why this answer is correct (10–300 chars)"
+    }
+  ]
+}
+
+STRICT RULES you must never break:
+1. Output ONLY the raw JSON object — no markdown, no \`\`\`json fences, nothing else.
+2. Every question must have EXACTLY 4 options labelled A, B, C, D.
+3. correctAnswer must be exactly one of: "A", "B", "C", or "D".
+4. Every question must have an explanation.
+5. All option labels must be uppercase single letters: A, B, C, D.
+6. Questions must be factually accurate and unambiguous.
+7. Options must be distinct — no two options should mean the same thing.
+8. The correct answer must actually be correct — double-check every answer.
+9. Difficulty level: ${difficulty}. Calibrate question complexity accordingly.
+10. Do not number the questions in the text field (no "1.", "2." etc.).
+
+If you cannot generate the quiz for any reason (inappropriate topic, etc.),
+output this exact JSON and nothing else:
+{ "error": "Cannot generate quiz for this topic" }
+`.trim()
+
+    /* ── Call Groq API ────────────────────────────────────────── */
+    console.log(`🤖 Generating AI quiz: "${prompt.trim()}"`)
+
+    const completion = await groq.chat.completions.create({
+      model:       'llama-3.3-70b-versatile',
+      temperature: 0.7,      // slight creativity — not too random
+      max_tokens:  4000,     // enough for 15 questions with explanations
+      messages: [
+        {
+          role:    'system',
+          content: systemPrompt,
+        },
+        {
+          role:    'user',
+          content: `Generate a quiz based on this request: "${prompt.trim()}"`,
+        },
+      ],
+    })
+
+    /* ── Extract raw text from Groq response ─────────────────── */
+    const rawText = completion.choices?.[0]?.message?.content?.trim()
+
+    if (!rawText) {
+      return res.status(502).json({
+        message: 'AI returned an empty response. Please try again.',
+      })
+    }
+
+    /* ── Clean and parse JSON ─────────────────────────────────── */
+    // Strip any accidental markdown fences the model may add
+    // despite being told not to — defensive parsing
+    const cleaned = rawText
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i,     '')
+      .replace(/\s*```$/,      '')
+      .trim()
+
+    let parsed
+    try {
+      parsed = JSON.parse(cleaned)
+    } catch {
+      console.error('AI JSON parse failed. Raw output:\n', rawText)
+      return res.status(502).json({
+        message:
+          'AI returned malformed JSON. Please rephrase your prompt and try again.',
+      })
+    }
+
+    /* ── Check if AI refused the topic ───────────────────────── */
+    if (parsed.error) {
+      return res.status(422).json({
+        message: `AI declined: ${parsed.error}`,
+      })
+    }
+
+    /* ── Validate structure ───────────────────────────────────── */
+    if (!parsed.title || !Array.isArray(parsed.questions)) {
+      return res.status(502).json({
+        message: 'AI response is missing required fields (title or questions).',
+      })
+    }
+
+    if (parsed.questions.length === 0) {
+      return res.status(502).json({
+        message: 'AI returned no questions. Please try a different prompt.',
+      })
+    }
+
+    /* ── Validate every question ──────────────────────────────── */
+    const validLabels = ['A', 'B', 'C', 'D']
+
+    for (let i = 0; i < parsed.questions.length; i++) {
+      const q = parsed.questions[i]
+
+      if (!q.text || typeof q.text !== 'string') {
+        return res.status(502).json({
+          message: `Question ${i + 1} is missing its text field.`,
+        })
+      }
+
+      if (!Array.isArray(q.options) || q.options.length !== 4) {
+        return res.status(502).json({
+          message: `Question ${i + 1} must have exactly 4 options.`,
+        })
+      }
+
+      if (!validLabels.includes(q.correctAnswer)) {
+        return res.status(502).json({
+          message: `Question ${i + 1} has an invalid correctAnswer: "${q.correctAnswer}".`,
+        })
+      }
+
+      // Ensure all 4 option labels exist
+      const labels = q.options.map((o) => o.label)
+      const hasAll = validLabels.every((l) => labels.includes(l))
+      if (!hasAll) {
+        return res.status(502).json({
+          message: `Question ${i + 1} is missing one or more option labels (A/B/C/D).`,
+        })
+      }
+    }
+
+    /* ── Save to MongoDB as a draft quiz ──────────────────────── */
+    const quiz = await Quiz.create({
+      title:        parsed.title.trim(),
+      description:  parsed.description?.trim() || '',
+      questions:    parsed.questions.map((q) => ({
+        text:          q.text.trim(),
+        options:       q.options.map((o) => ({
+          label: o.label.toUpperCase(),
+          text:  o.text.trim(),
+        })),
+        correctAnswer: q.correctAnswer.toUpperCase(),
+        explanation:   q.explanation?.trim() || '',
+      })),
+      timeLimit:    timeLimit || 600,
+      status:       'draft',         // always saved as draft first
+      creator:      req.user._id,
+      aiGenerated:  true,            // flag so dashboard can show AI badge
+    })
+
+    console.log(`✅ AI quiz saved: "${quiz.title}" (${quiz.questions.length} questions)`)
+
+    res.status(201).json({
+      message:   `AI generated "${quiz.title}" with ${quiz.questions.length} questions. Saved as draft.`,
+      quiz,
+    })
+
+  } catch (error) {
+    /* ── Groq-specific error handling ───────────────────────── */
+    if (error?.status === 429) {
+      return res.status(429).json({
+        message: 'Groq rate limit reached. Please wait a moment and try again.',
+      })
+    }
+
+    if (error?.status === 401) {
+      return res.status(500).json({
+        message: 'Invalid Groq API key. Check your .env file.',
+      })
+    }
+
+    if (error?.code === 'ENOTFOUND' || error?.code === 'ECONNREFUSED') {
+      return res.status(503).json({
+        message: 'Cannot reach Groq API. Check your internet connection.',
+      })
+    }
+
+    console.error('generateAIQuiz error:', error)
+    res.status(500).json({ message: 'Server error during AI generation' })
   }
 }
