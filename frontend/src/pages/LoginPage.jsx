@@ -1,5 +1,5 @@
 import { useState }              from 'react'
-import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useDispatch }           from 'react-redux'
 import { useForm }               from 'react-hook-form'
 import { zodResolver }           from '@hookform/resolvers/zod'
@@ -70,8 +70,6 @@ const S = {
 const LoginPage = () => {
   const dispatch   = useDispatch()
   const navigate   = useNavigate()
-  const location   = useLocation()
-  const from       = location.state?.from || '/'
   const [loading, setLoading] = useState(false)
 
   const { register, handleSubmit, formState: { errors } } = useForm({

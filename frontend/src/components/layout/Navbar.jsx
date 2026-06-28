@@ -88,11 +88,6 @@ const Navbar = () => {
           </>
         )}
 
-        {isAuthenticated && !isCreator && (
-          <NavLink to="/leaderboard" active={false}>
-            Leaderboard
-          </NavLink>
-        )}
       </div>
 
       {/* ── Right side ────────────────────────────────────── */}

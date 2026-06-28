@@ -55,7 +55,10 @@ export const submitAttempt = async (req, res) => {
 
     const totalQuestions = quiz.questions.length
     const score = Math.round((correctCount / totalQuestions) * 100)
-    const penalised = tabSwitchCount >= 3
+    const safeTimeTaken = Math.max(0, Math.min(Number(timeTaken) || 0, quiz.timeLimit))
+    const safeTabSwitchCount = Math.max(0, Number(tabSwitchCount) || 0)
+    const safeTimedOut = Boolean(timedOut) || safeTimeTaken >= quiz.timeLimit
+    const penalised = safeTabSwitchCount >= 3
     const finalScore = penalised ? Math.max(0, score - 10) : score
 
     const attempt = await Attempt.create({
@@ -65,9 +68,9 @@ export const submitAttempt = async (req, res) => {
       score: finalScore,
       correctCount,
       totalQuestions,
-      timeTaken,
-      timedOut,
-      tabSwitchCount,
+      timeTaken: safeTimeTaken,
+      timedOut: safeTimedOut,
+      tabSwitchCount: safeTabSwitchCount,
       penalised,
     })
 

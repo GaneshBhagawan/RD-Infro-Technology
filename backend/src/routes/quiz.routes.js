@@ -12,6 +12,8 @@ import {
 }                          from '../controllers/quiz.controller.js'
 import verifyToken         from '../middleware/auth.middleware.js'
 import requireRole         from '../middleware/role.middleware.js'
+import jwt                 from 'jsonwebtoken'
+import User                from '../models/User.js'
 
 const router = Router()
 
@@ -92,20 +94,21 @@ router.get(
    Uses the already imported verifyToken middleware safely.
    If no token is sent, it smoothly passes the user forward as a guest.
 ─────────────────────────────────────────────────────────────────── */
-function optionalAuth(req, res, next) {
+async function optionalAuth(req, _res, next) {
   const authHeader = req.headers['authorization']
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return next() // Clear to proceed as anonymous public taker
   }
-  
-  // Safely execute your existing verification token middleware
-  verifyToken(req, res, (err) => {
-    // If token is expired or invalid, clear any corrupted user data and move on
-    if (err) {
-      req.user = null 
-    }
+
+  try {
+    const token = authHeader.split(' ')[1]
+    const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET)
+    req.user = await User.findById(decoded.userId).select('-password -refreshToken')
+  } catch {
+    req.user = null
+  } finally {
     next()
-  })
+  }
 }
 
 export default router

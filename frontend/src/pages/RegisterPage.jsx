@@ -13,9 +13,7 @@ const schema = z.object({
     .regex(/^[a-zA-Z0-9_]+$/, 'Only letters, numbers, and underscores'),
   email:    z.string().email('Enter a valid email'),
   password: z.string()
-    .min(6,  'Password must be at least 6 characters')
-    .regex(/[A-Z]/, 'Must contain at least one uppercase letter')
-    .regex(/[0-9]/, 'Must contain at least one number'),
+    .min(6,  'Password must be at least 6 characters'),
   role:     z.enum(['creator', 'taker']),
 })
 
@@ -206,7 +204,7 @@ const RegisterPage = () => {
             <input
               {...register('password')}
               type="password"
-              placeholder="Min 6 chars, 1 uppercase, 1 number"
+              placeholder="Min 6 characters"
               style={{ ...S.input, ...(errors.password ? S.inputErr : {}) }}
             />
             {errors.password && <p style={S.errText}>{errors.password.message}</p>}
