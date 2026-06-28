@@ -365,7 +365,10 @@ export const generateAIQuiz = async (req, res) => {
        no preamble, no markdown, no extra text.
        Any deviation breaks JSON.parse() and we catch it.
     ══════════════════════════════════════════════════════════ */
+    // This endpoint generates quizzes based on the provided difficulty,
+    // but keeps the question count decided by the AI / user intent.
     const systemPrompt = `
+
 You are a professional quiz generation engine. Your ONLY job is to output
 a single valid JSON object — nothing else. No markdown, no code fences,
 no explanations, no preamble, no trailing text. Just raw JSON.
@@ -399,8 +402,13 @@ STRICT RULES you must never break:
 6. Questions must be factually accurate and unambiguous.
 7. Options must be distinct — no two options should mean the same thing.
 8. The correct answer must actually be correct — double-check every answer.
-9. Difficulty level: ${difficulty}. Calibrate question complexity accordingly.
+9. Difficulty level: ${difficulty}. You MUST change question difficulty substantially:
+   - easy: simple recall/basic concepts. Short reasoning. Distractors should be obviously wrong.
+   - medium: application/interpretation with 2-step reasoning. Distractors should be plausible.
+   - hard: advanced reasoning/analysis. Prefer scenario-based or multi-condition questions. Distractors should be tricky/nuanced.
 10. Do not number the questions in the text field (no "1.", "2." etc.).
+11. Explanations must reflect the difficulty (easy: brief concept; medium: why alternatives fail; hard: deeper rationale).
+12. Generate as many questions as needed to satisfy the user's request (use your best judgment; do not force a fixed count).
 
 If you cannot generate the quiz for any reason (inappropriate topic, etc.),
 output this exact JSON and nothing else:
@@ -413,8 +421,9 @@ output this exact JSON and nothing else:
     const completion = await groq.chat.completions.create({
       model:       'llama-3.3-70b-versatile',
       temperature: 0.7,      // slight creativity — not too random
-      max_tokens:  4000,     // enough for 15 questions with explanations
+      max_tokens:  6500,     // support larger quizzes for medium/hard
       messages: [
+
         {
           role:    'system',
           content: systemPrompt,
