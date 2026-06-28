@@ -420,9 +420,15 @@ output this exact JSON and nothing else:
 
     const completion = await groq.chat.completions.create({
       model:       'llama-3.3-70b-versatile',
-      temperature: 0.7,      // slight creativity — not too random
+      // Higher temperature + diversity settings so the same prompt produces different quizzes.
+      temperature: 0.95,
+      top_p:       0.98,
+      frequency_penalty: 0.6,
+      presence_penalty:  0.8,
       max_tokens:  6500,     // support larger quizzes for medium/hard
+
       messages: [
+
 
         {
           role:    'system',
@@ -430,7 +436,11 @@ output this exact JSON and nothing else:
         },
         {
           role:    'user',
-          content: `Generate a quiz based on this request: "${prompt.trim()}"`,
+          content:
+            `Generate a quiz based on this request: "${prompt.trim()}"\n\n` +
+            `Diversity rule (important): even if the prompt is identical to a previous run, you MUST vary the questions, wording, and correct answers. ` +
+            `Do NOT repeat any question or option text from earlier generations.\n\n` +
+            `Output ONLY the JSON in the system prompt schema.`,
         },
       ],
     })
